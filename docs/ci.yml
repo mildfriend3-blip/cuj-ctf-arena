@@ -1,0 +1,54 @@
+name: CUJ CyberOps CTF CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python verification dependencies
+        run: pip install pillow cryptography
+
+      - name: Install Node dependencies
+        run: |
+          npm ci
+          npm --prefix client ci
+
+      - name: Typecheck & build frontend
+        run: |
+          npm run typecheck
+          npm run build:client
+
+      - name: Verify offline CTF challenge artifacts
+        run: python server/scripts/verify_solvers.py
+
+      - name: Run full-stack E2E integration tests
+        run: |
+          npm start &
+          SERVER_PID=$!
+          trap "kill $SERVER_PID 2>/dev/null || true" EXIT
+          for i in $(seq 1 20); do
+            if node -e "fetch('http://localhost:3000/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"; then
+              break
+            fi
+            sleep 1
+          done
+          npx tsx server/scripts/e2e_test.ts

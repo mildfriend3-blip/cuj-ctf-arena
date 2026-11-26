@@ -1,0 +1,7 @@
+=== CUJ CyberSec Cell — Intercepted Transmission ===
+Origin: Shivalik Relay Node #04
+Encoding: Base64(XOR(plaintext, 4-byte_key))
+Known Flag Prefix: CUJCTF{
+
+Ciphertext (Base64):
+AAAAYhcTMVlzJxVCMWQoficnfkYkZCRGHDh+UjdmOFw=

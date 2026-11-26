@@ -1,0 +1,37 @@
+{
+  "name": "cuj-ctf-arena",
+  "version": "1.0.0",
+  "description": "Central University of Jammu — Multi-Team Capture The Flag Competition Platform",
+  "type": "commonjs",
+  "scripts": {
+    "seed:artifacts": "python server/scripts/generate_challenges.py && python server/scripts/verify_solvers.py",
+    "dev:server": "tsx watch server/src/index.ts",
+    "dev:client": "npm --prefix client run dev",
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "build:client": "npm --prefix client run build",
+    "start": "tsx server/src/index.ts",
+    "typecheck": "tsc --noEmit && npm --prefix client exec tsc -- --noEmit"
+  },
+  "keywords": ["ctf", "cybersecurity", "cuj", "competition"],
+  "author": "CUJ CyberOps",
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.1.1",
+    "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/multer": "^2.1.0",
+    "@types/node": "^25.5.0",
+    "@types/ws": "^8.18.1",
+    "concurrently": "^9.2.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

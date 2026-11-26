@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { hashPassword } from './auth.js';
 import { ARTIFACTS_DIR } from './config.js';
-import { db, getSetting, setSetting } from './db.js';
+import { db, getSetting, initSchema, setSetting } from './db.js';
 
 function artifactMeta(relPath: string, displayName: string) {
   const full = path.join(ARTIFACTS_DIR, relPath);
@@ -38,30 +38,41 @@ interface SeedChallenge {
   hints: Array<{ content: string; cost: number }>;
 }
 
-export function ensureSeeded(): void {
-  const alreadySeeded = getSetting('seeded_v1', '0');
+let readyPromise: Promise<void> | null = null;
+
+export function ensureSeeded(): Promise<void> {
+  if (!readyPromise) {
+    readyPromise = runSeed().catch((err) => {
+      readyPromise = null;
+      throw err;
+    });
+  }
+  return readyPromise;
+}
+
+async function runSeed(): Promise<void> {
+  await initSchema();
+  const alreadySeeded = await getSetting('seeded_v1', '0');
   if (alreadySeeded === '1') return;
 
-  // Competition Settings
   const now = Date.now();
   const startsAt = new Date(now - 6 * 3600 * 1000).toISOString();
   const endsAt = new Date(now + 42 * 3600 * 1000).toISOString();
 
-  setSetting('competition_name', 'CUJ CyberOps CTF 2026');
-  setSetting('university_name', 'Central University of Jammu');
-  setSetting('subtitle', 'Inter-Departmental Capture The Flag Arena • Rahya-Suchani Campus');
-  setSetting('status', 'live');
-  setSetting('starts_at', startsAt);
-  setSetting('ends_at', endsAt);
-  setSetting('max_team_size', '4');
-  setSetting('scoreboard_frozen', '0');
-  setSetting('freeze_at', '');
-  setSetting('writeups_unlocked', '0');
-  setSetting('registration_open', '1');
-  setSetting('dynamic_scoring', '1');
+  await setSetting('competition_name', 'CUJ CyberOps CTF 2026');
+  await setSetting('university_name', 'Central University of Jammu');
+  await setSetting('subtitle', 'Inter-Departmental Capture The Flag Arena • Rahya-Suchani Campus');
+  await setSetting('status', 'live');
+  await setSetting('starts_at', startsAt);
+  await setSetting('ends_at', endsAt);
+  await setSetting('max_team_size', '4');
+  await setSetting('scoreboard_frozen', '0');
+  await setSetting('freeze_at', '');
+  await setSetting('writeups_unlocked', '0');
+  await setSetting('registration_open', '1');
+  await setSetting('dynamic_scoring', '1');
 
   const challenges: SeedChallenge[] = [
-    // --- CRYPTO ---
     {
       slug: 'shivalik-xor',
       title: 'Shivalik Shift & XOR',
@@ -82,7 +93,7 @@ export function ensureSeeded(): void {
       sort_order: 10,
       hints: [
         { content: 'Base64 decode the line at the bottom of the file first.', cost: 15 },
-        { content: 'XOR the first 4 decoded bytes with `b"CUJ!"`? Wait — XOR them with `b"CUJC"` to extract the 4-byte key!', cost: 30 },
+        { content: 'XOR the first 4 decoded bytes with `b"CUJC"` to extract the 4-byte key!', cost: 30 },
       ],
     },
     {
@@ -134,8 +145,6 @@ export function ensureSeeded(): void {
         { content: 'Because `state` is 24 bits and `(state >> 16) & 0xFF` is leaked directly, there are only 65,536 possible initial states after step 1.', cost: 75 },
       ],
     },
-
-    // --- STEGO ---
     {
       slug: 'rahya-campus-banner',
       title: 'Rahya Campus Banner',
@@ -154,9 +163,7 @@ export function ensureSeeded(): void {
       tags: ['png', 'iend', 'strings', 'base64'],
       writeup: 'Inspecting PNG chunks or running `strings` reveals Base64 data appended right after the `IEND` chunk. Decoding it yields the flag.',
       sort_order: 40,
-      hints: [
-        { content: 'Check the PNG `tEXt` metadata chunk or inspect bytes after `IEND`.', cost: 20 },
-      ],
+      hints: [{ content: 'Check the PNG `tEXt` metadata chunk or inspect bytes after `IEND`.', cost: 20 }],
     },
     {
       slug: 'pixel-matrix-lsb',
@@ -199,12 +206,8 @@ export function ensureSeeded(): void {
       tags: ['wav', 'audio-stego', 'pcm-lsb'],
       writeup: 'Read raw 16-bit signed PCM frames via Python `wave` + `struct.unpack("<h", ...)`, extract `(sample & 1)` across frames, and assemble 8-bit MSB-first bytes.',
       sort_order: 60,
-      hints: [
-        { content: 'This is spatial-domain audio steganography — check the LSB of each 16-bit PCM sample.', cost: 40 },
-      ],
+      hints: [{ content: 'This is spatial-domain audio steganography — check the LSB of each 16-bit PCM sample.', cost: 40 }],
     },
-
-    // --- OSINT ---
     {
       slug: 'lost-drone-samba',
       title: 'Lost Drone Over Samba',
@@ -223,9 +226,7 @@ export function ensureSeeded(): void {
       tags: ['exif', 'metadata', 'base64', 'geoint'],
       writeup: 'Inspect EXIF tags (`exiftool` or Pillow `.getexif()`). The `Artist` tag (`0x013B`) contains a Base64 `SecretToken` decoding to the flag.',
       sort_order: 70,
-      hints: [
-        { content: 'Run `exiftool` or inspect JPEG EXIF tags with Python Pillow (`img.getexif()`).', cost: 20 },
-      ],
+      hints: [{ content: 'Run `exiftool` or inspect JPEG EXIF tags with Python Pillow (`img.getexif()`).', cost: 20 }],
     },
     {
       slug: 'ghost-committer-dossier',
@@ -245,12 +246,8 @@ export function ensureSeeded(): void {
       tags: ['git', 'secrets', 'recon', 'devops'],
       writeup: 'Unzip the archive and run `git log -p --all`. Commit #2 committed `.env.staging` containing `ADMIN_OVERRIDE_FLAG` before commit #3 deleted it.',
       sort_order: 80,
-      hints: [
-        { content: 'Deleted files remain in Git commit snapshots forever unless history is rewritten.', cost: 25 },
-      ],
+      hints: [{ content: 'Deleted files remain in Git commit snapshots forever unless history is rewritten.', cost: 25 }],
     },
-
-    // --- WEB ---
     {
       slug: 'faculty-noticeboard',
       title: 'Faculty Noticeboard Leak',
@@ -269,9 +266,7 @@ export function ensureSeeded(): void {
       tags: ['cookies', 'robots.txt', 'recon'],
       writeup: 'Check `/ctf-labs/noticeboard/robots.txt` and `/backup-config.json`, then modify cookie `cuj_role=admin` and request `/ctf-labs/noticeboard/admin`.',
       sort_order: 90,
-      hints: [
-        { content: 'Open DevTools -> Network / Application Cookies and check `/ctf-labs/noticeboard/robots.txt`.', cost: 20 },
-      ],
+      hints: [{ content: 'Open DevTools -> Network / Application Cookies and check `/ctf-labs/noticeboard/robots.txt`.', cost: 20 }],
     },
     {
       slug: 'samba-directory-sqli',
@@ -314,12 +309,8 @@ export function ensureSeeded(): void {
       tags: ['jwt', 'hmac', 'cryptanalysis'],
       writeup: 'Visit `/ctf-labs/vault/hint`, derive the HS256 secret `cuj2026`, sign a new JWT payload `{ "role": "dean" }`, and call `/ctf-labs/vault/flag`.',
       sort_order: 110,
-      hints: [
-        { content: 'Check `/ctf-labs/vault/hint` for the password policy used to sign HS256 tokens.', cost: 35 },
-      ],
+      hints: [{ content: 'Check `/ctf-labs/vault/hint` for the password policy used to sign HS256 tokens.', cost: 35 }],
     },
-
-    // --- REVERSE ENGINEERING ---
     {
       slug: 'gatekeeper-license',
       title: 'Gatekeeper License Check',
@@ -338,9 +329,7 @@ export function ensureSeeded(): void {
       tags: ['python', 'bitwise', 'license-key'],
       writeup: 'Invert `((ord(ch) ^ 0x55) + idx * 3) & 0xFF == target` via `chr(((val - idx * 3) & 0xFF) ^ 0x55)`.',
       sort_order: 120,
-      hints: [
-        { content: 'Reverse the operations in opposite order: subtract `idx * 3` mod 256, then XOR with `0x55`.', cost: 20 },
-      ],
+      hints: [{ content: 'Reverse the operations in opposite order: subtract `idx * 3` mod 256, then XOR with `0x55`.', cost: 20 }],
     },
     {
       slug: 'bytecode-vm-lock',
@@ -360,12 +349,8 @@ export function ensureSeeded(): void {
       tags: ['vm', 'bytecode', 'reverse-engineering'],
       writeup: 'Invert each byte of `EXPECTED`: subtract 19 mod 256, XOR with `(0xA7 + idx) & 0xFF`, then rotate right by 3 bits.',
       sort_order: 130,
-      hints: [
-        { content: 'The inverse of 8-bit `ROL(x, 3)` is `ROR(x, 3)` = `((x >> 3) | (x << 5)) & 0xFF`.', cost: 40 },
-      ],
+      hints: [{ content: 'The inverse of 8-bit `ROL(x, 3)` is `ROR(x, 3)` = `((x >> 3) | (x << 5)) & 0xFF`.', cost: 40 }],
     },
-
-    // --- PWN ---
     {
       slug: 'overflow-gradebook',
       title: 'Overflow Gradebook',
@@ -384,9 +369,7 @@ export function ensureSeeded(): void {
       tags: ['bof', 'stack-overflow', 'little-endian'],
       writeup: 'Send 32 padding bytes followed by `0x43554a21` in little-endian (`\\x21\\x4a\\x55\\x43`, or `AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA!JUC`).',
       sort_order: 140,
-      hints: [
-        { content: 'Remember x86/x64 is little-endian: `0x43554a21` in memory bytes is `\\x21\\x4a\\x55\\x43`.', cost: 30 },
-      ],
+      hints: [{ content: 'Remember x86/x64 is little-endian: `0x43554a21` in memory bytes is `\\x21\\x4a\\x55\\x43`.', cost: 30 }],
     },
     {
       slug: 'format-inspector-leak',
@@ -406,12 +389,8 @@ export function ensureSeeded(): void {
       tags: ['format-string', 'memory-leak', 'stack'],
       writeup: 'Send `%6$p.%7$p.%8$p.%9$p` in the Pwn terminal, convert each 64-bit hex word from little-endian bytes to ASCII, and concatenate.',
       sort_order: 150,
-      hints: [
-        { content: 'Try positional format specifiers like `%6$p %7$p %8$p %9$p`.', cost: 35 },
-      ],
+      hints: [{ content: 'Try positional format specifiers like `%6$p %7$p %8$p %9$p`.', cost: 35 }],
     },
-
-    // --- FORENSICS ---
     {
       slug: 'rogue-packet-capture',
       title: 'Rogue Packet Capture',
@@ -430,9 +409,7 @@ export function ensureSeeded(): void {
       tags: ['pcap', 'wireshark', 'http', 'network-forensics'],
       writeup: 'Filter HTTP/TCP packets targeting `exfil.cuj-lab:8080`, concatenate `X-Exfil-Chunk-1..3` in order, and Base64 decode.',
       sort_order: 160,
-      hints: [
-        { content: 'Look for non-standard `X-Exfil-Chunk-*` HTTP headers across three packets.', cost: 25 },
-      ],
+      hints: [{ content: 'Look for non-standard `X-Exfil-Chunk-*` HTTP headers across three packets.', cost: 25 }],
     },
     {
       slug: 'corrupted-png-evidence',
@@ -452,19 +429,15 @@ export function ensureSeeded(): void {
       tags: ['magic-bytes', 'hex-editing', 'png'],
       writeup: 'The `IHDR` chunk at offset 12 reveals this is a PNG. Replace the first 8 bytes (`00 00 00 00 44 45 41 44`) with the PNG signature `89 50 4E 47 0D 0A 1A 0A` and open the repaired PNG.',
       sort_order: 170,
-      hints: [
-        { content: 'Inspect the first 32 bytes in hex — notice `IHDR` starting at offset 12.', cost: 25 },
-      ],
+      hints: [{ content: 'Inspect the first 32 bytes in hex — notice `IHDR` starting at offset 12.', cost: 25 }],
     },
-
-    // --- MISC ---
     {
       slug: 'rapid-hash-gauntlet',
       title: 'Rapid Hash Gauntlet',
       category: 'Misc',
       difficulty: 'Medium',
       author: 'CUJ Algo Club',
-      description: `Solve a live Proof-of-Work challenge against the server within **15 seconds**! Request a random prefix from \`/api/labs/misc/hash-gauntlet/start\`, find a nonce such that \`SHA256(prefix + nonce)\` begins with \`0000\`, and POST it to \`/verify\`.\n\nUse the **Interactive Gauntlet Runner** inside this challenge or script it in Python!`,
+      description: `Solve a live Proof-of-Work challenge against the server within **20 seconds**! Request a random prefix from \`/api/labs/misc/hash-gauntlet/start\`, find a nonce such that \`SHA256(prefix + nonce)\` begins with \`0000\`, and POST it to \`/verify\`.\n\nUse the **Interactive Gauntlet Runner** inside this challenge or script it in Python!`,
       flag_value: 'CUJCTF{pr00f_0f_w0rk_sp33d_run}',
       initial_points: 350,
       min_points: 110,
@@ -476,9 +449,7 @@ export function ensureSeeded(): void {
       tags: ['ppc', 'sha256', 'automation'],
       writeup: 'Fetch `/api/labs/misc/hash-gauntlet/start`, iterate integer nonces until `hashlib.sha256((prefix + str(i)).encode()).hexdigest().startswith("0000")`, and POST `{challengeId, nonce}`.',
       sort_order: 180,
-      hints: [
-        { content: '4 leading hex zeros only takes ~65,536 SHA-256 hashes (< 50ms in Python or browser JS).', cost: 20 },
-      ],
+      hints: [{ content: '4 leading hex zeros only takes ~65,536 SHA-256 hashes (< 50ms in Python or browser JS).', cost: 20 }],
     },
     {
       slug: 'matryoshka-encoding',
@@ -498,24 +469,18 @@ export function ensureSeeded(): void {
       tags: ['encoding', 'zlib', 'base85', 'rot13'],
       writeup: 'Decode in reverse: `bytes.fromhex` -> `base64.b64decode` -> `zlib.decompress` -> `base64.b85decode` -> `codecs.decode(..., "rot_13")`.',
       sort_order: 190,
-      hints: [
-        { content: 'Start with `bytes.fromhex(payload)` in Python.', cost: 15 },
-      ],
+      hints: [{ content: 'Start with `bytes.fromhex(payload)` in Python.', cost: 15 }],
     },
   ];
 
-  const insertChallenge = db.prepare(`
-    INSERT INTO challenges (
-      slug, title, category, difficulty, description, author, flag_value,
-      initial_points, min_points, decay, is_dynamic, first_blood_bonus,
-      lab_type, lab_url, artifacts_json, tags_json, writeup, published, sort_order
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, 1, ?)
-  `);
-  const insertHint = db.prepare('INSERT INTO hints (challenge_id, order_idx, content, cost) VALUES (?, ?, ?, ?)');
-
   const challengeIdBySlug = new Map<string, number>();
   for (const c of challenges) {
-    const res = insertChallenge.run(
+    const res = await db.run(
+      `INSERT INTO challenges (
+        slug, title, category, difficulty, description, author, flag_value,
+        initial_points, min_points, decay, is_dynamic, first_blood_bonus,
+        lab_type, lab_url, artifacts_json, tags_json, writeup, published, sort_order
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, 1, ?)`,
       c.slug,
       c.title,
       c.category,
@@ -534,12 +499,19 @@ export function ensureSeeded(): void {
       c.writeup,
       c.sort_order
     );
-    const chId = Number(res.lastInsertRowid);
+    const chId = res.lastInsertRowid;
     challengeIdBySlug.set(c.slug, chId);
-    c.hints.forEach((h, idx) => insertHint.run(chId, idx + 1, h.content, h.cost));
+    for (let idx = 0; idx < c.hints.length; idx++) {
+      await db.run(
+        'INSERT INTO hints (challenge_id, order_idx, content, cost) VALUES (?, ?, ?, ?)',
+        chId,
+        idx + 1,
+        c.hints[idx].content,
+        c.hints[idx].cost
+      );
+    }
   }
 
-  // Seed Teams
   const seedTeams = [
     { name: 'Shivalik Rootkits', tag: 'SHVK', department: 'CSE / CS&IT', motto: 'Zero day before dawn.', invite_code: 'CUJ-SHVK-2026' },
     { name: 'Tawi ByteBandits', tag: 'TAWI', department: 'M.Tech Cyber', motto: 'Decrypting everything on wire.', invite_code: 'CUJ-TAWI-2026' },
@@ -549,23 +521,21 @@ export function ensureSeeded(): void {
     { name: 'Rahya Reversers', tag: 'RHYA', department: 'MCA', motto: 'Disassemble the world.', invite_code: 'CUJ-RHYA-2026' },
   ];
 
-  const insertTeam = db.prepare(
-    'INSERT INTO teams (name, tag, department, motto, invite_code) VALUES (?, ?, ?, ?, ?)'
-  );
   const teamIds = new Map<string, number>();
   for (const t of seedTeams) {
-    const res = insertTeam.run(t.name, t.tag, t.department, t.motto, t.invite_code);
-    teamIds.set(t.name, Number(res.lastInsertRowid));
+    const res = await db.run(
+      'INSERT INTO teams (name, tag, department, motto, invite_code) VALUES (?, ?, ?, ?, ?)',
+      t.name,
+      t.tag,
+      t.department,
+      t.motto,
+      t.invite_code
+    );
+    teamIds.set(t.name, res.lastInsertRowid);
   }
 
-  // Seed Demo Users (Admin, Team Captains, Members, Solo Student)
   const adminHash = hashPassword('Admin@CUJ2026');
   const studentHash = hashPassword('Student@CUJ2026');
-
-  const insertUser = db.prepare(`
-    INSERT INTO users (username, email, password_hash, role, department, roll_number, team_id, avatar_seed)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `);
 
   const seedUsers = [
     { username: 'cuj_organizer', email: 'admin@cujammu.ac.in', hash: adminHash, role: 'admin', dept: 'CS&IT Faculty', roll: 'FAC-01', team: null },
@@ -583,20 +553,28 @@ export function ensureSeeded(): void {
   const userIds = new Map<string, number>();
   for (const u of seedUsers) {
     const tid = u.team ? teamIds.get(u.team) || null : null;
-    const res = insertUser.run(u.username, u.email, u.hash, u.role, u.dept, u.roll, tid, u.username);
-    userIds.set(u.username, Number(res.lastInsertRowid));
+    const res = await db.run(
+      `INSERT INTO users (username, email, password_hash, role, department, roll_number, team_id, avatar_seed)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      u.username,
+      u.email,
+      u.hash,
+      u.role,
+      u.dept,
+      u.roll,
+      tid,
+      u.username
+    );
+    userIds.set(u.username, res.lastInsertRowid);
   }
 
-  // Assign Team Captains
-  const setCaptain = db.prepare('UPDATE teams SET captain_id = ? WHERE id = ?');
-  setCaptain.run(userIds.get('aarav_cse')!, teamIds.get('Shivalik Rootkits')!);
-  setCaptain.run(userIds.get('rohan_cyber')!, teamIds.get('Tawi ByteBandits')!);
-  setCaptain.run(userIds.get('vikram_jz')!, teamIds.get('Jammu ZeroDay')!);
-  setCaptain.run(userIds.get('ananya_math')!, teamIds.get('Chenab Ciphers')!);
-  setCaptain.run(userIds.get('arjun_ece')!, teamIds.get('Samba Shellcoders')!);
-  setCaptain.run(userIds.get('isha_mca')!, teamIds.get('Rahya Reversers')!);
+  await db.run('UPDATE teams SET captain_id = ? WHERE id = ?', userIds.get('aarav_cse')!, teamIds.get('Shivalik Rootkits')!);
+  await db.run('UPDATE teams SET captain_id = ? WHERE id = ?', userIds.get('rohan_cyber')!, teamIds.get('Tawi ByteBandits')!);
+  await db.run('UPDATE teams SET captain_id = ? WHERE id = ?', userIds.get('vikram_jz')!, teamIds.get('Jammu ZeroDay')!);
+  await db.run('UPDATE teams SET captain_id = ? WHERE id = ?', userIds.get('ananya_math')!, teamIds.get('Chenab Ciphers')!);
+  await db.run('UPDATE teams SET captain_id = ? WHERE id = ?', userIds.get('arjun_ece')!, teamIds.get('Samba Shellcoders')!);
+  await db.run('UPDATE teams SET captain_id = ? WHERE id = ?', userIds.get('isha_mca')!, teamIds.get('Rahya Reversers')!);
 
-  // Seed realistic initial solves (leaving several Hard/Medium challenges unsolved so user can compete & get First Blood!)
   const challengeBonusMap = new Map(challenges.map((c) => [c.slug, c.first_blood_bonus]));
   const initialSolves: Array<{ slug: string; team: string; user: string; minutesAgo: number }> = [
     { slug: 'shivalik-xor', team: 'Shivalik Rootkits', user: 'aarav_cse', minutesAgo: 310 },
@@ -621,15 +599,6 @@ export function ensureSeeded(): void {
   ];
 
   const firstBloodSeen = new Set<number>();
-  const insertSolve = db.prepare(`
-    INSERT INTO solves (challenge_id, team_id, user_id, is_first_blood, bonus_points, solved_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
-  const insertSub = db.prepare(`
-    INSERT INTO submissions (challenge_id, team_id, user_id, submitted_flag, is_correct, ip_address, submitted_at)
-    VALUES (?, ?, ?, ?, 1, '10.24.0.1', ?)
-  `);
-
   for (const s of initialSolves) {
     const chId = challengeIdBySlug.get(s.slug)!;
     const tId = teamIds.get(s.team)!;
@@ -637,21 +606,37 @@ export function ensureSeeded(): void {
     const ts = new Date(now - s.minutesAgo * 60 * 1000).toISOString();
     const isFb = !firstBloodSeen.has(chId);
     if (isFb) firstBloodSeen.add(chId);
-    const bonus = isFb ? (challengeBonusMap.get(s.slug) || 25) : 0;
-    insertSolve.run(chId, tId, uId, isFb ? 1 : 0, bonus, ts);
-    insertSub.run(chId, tId, uId, '[SEEDED_VERIFIED_FLAG]', ts);
+    const bonus = isFb ? challengeBonusMap.get(s.slug) || 25 : 0;
+    await db.run(
+      'INSERT INTO solves (challenge_id, team_id, user_id, is_first_blood, bonus_points, solved_at) VALUES (?, ?, ?, ?, ?, ?)',
+      chId,
+      tId,
+      uId,
+      isFb ? 1 : 0,
+      bonus,
+      ts
+    );
+    await db.run(
+      'INSERT INTO submissions (challenge_id, team_id, user_id, submitted_flag, is_correct, ip_address, submitted_at) VALUES (?, ?, ?, ?, 1, ?, ?)',
+      chId,
+      tId,
+      uId,
+      '[SEEDED_VERIFIED_FLAG]',
+      '10.24.0.1',
+      ts
+    );
   }
 
-  // Seed Announcements
-  const insertAnn = db.prepare('INSERT INTO announcements (title, body, severity, created_by, created_at) VALUES (?, ?, ?, ?, ?)');
-  insertAnn.run(
+  await db.run(
+    'INSERT INTO announcements (title, body, severity, created_by, created_at) VALUES (?, ?, ?, ?, ?)',
     'Welcome to CUJ CyberOps CTF 2026!',
     'All 19 challenges across Crypto, Stego, OSINT, Web, Reverse Engineering, Pwn, Forensics, and Misc are now LIVE. Form teams of up to 4 CUJ students and compete for First Blood bonuses!',
     'info',
     'CUJ CyberSec Cell',
     new Date(now - 360 * 60 * 1000).toISOString()
   );
-  insertAnn.run(
+  await db.run(
+    'INSERT INTO announcements (title, body, severity, created_by, created_at) VALUES (?, ?, ?, ?, ?)',
     'Live Interactive Web & Pwn Labs Active',
     'Web exploitation targets (/ctf-labs/*) and Pwn memory terminals are running live on the platform — no external VPN required!',
     'warning',
@@ -659,5 +644,5 @@ export function ensureSeeded(): void {
     new Date(now - 180 * 60 * 1000).toISOString()
   );
 
-  setSetting('seeded_v1', '1');
+  await setSetting('seeded_v1', '1');
 }

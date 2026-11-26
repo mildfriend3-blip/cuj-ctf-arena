@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Central University of Jammu — Multi-Team Capture The Flag Competition Platform",
   "type": "commonjs",
+  "engines": {
+    "node": "24.x"
+  },
   "scripts": {
     "seed:artifacts": "python server/scripts/generate_challenges.py && python server/scripts/verify_solvers.py",
     "dev:server": "tsx watch server/src/index.ts",
@@ -12,10 +15,16 @@
     "start": "tsx server/src/index.ts",
     "typecheck": "tsc --noEmit && npm --prefix client exec tsc -- --noEmit"
   },
-  "keywords": ["ctf", "cybersecurity", "cuj", "competition"],
+  "keywords": [
+    "ctf",
+    "cybersecurity",
+    "cuj",
+    "competition"
+  ],
   "author": "CUJ CyberOps",
   "license": "MIT",
   "dependencies": {
+    "@libsql/client": "^0.18.0",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "helmet": "^8.1.0",

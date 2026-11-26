@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import express, { type Router } from 'express';
 import jwt from 'jsonwebtoken';
-import { LAB_JWT_SECRET } from './config.js';
+import { JWT_SECRET, LAB_JWT_SECRET } from './config.js';
 
 // Isolated in-memory SQLite database specifically for Web Challenge #2 (SQLi Directory)
 const sqliDb = new DatabaseSync(':memory:');
@@ -28,9 +28,6 @@ sqliDb.exec(`
   INSERT INTO secrets (id, key_name, flag_value) VALUES
     (1, 'SAMBA_MASTER_FLAG', 'CUJCTF{un10n_sqli_s4mb4_d1r}');
 `);
-
-// Ephemeral PoW challenges for Misc #1 (Hash Gauntlet)
-const powStore = new Map<string, { prefix: string; target: string; expiresAt: number }>();
 
 function parseCookies(cookieHeader: string | undefined): Record<string, string> {
   const result: Record<string, string> = {};
@@ -99,9 +96,7 @@ function labPageShell(title: string, badge: string, bodyHtml: string): string {
 export function createLabsRouter(): Router {
   const router = express.Router();
 
-  // =========================================================================
-  // WEB CHALLENGE 1: Faculty Noticeboard Leak (/ctf-labs/noticeboard)
-  // =========================================================================
+  // WEB CHALLENGE 1: Faculty Noticeboard Leak
   router.get('/ctf-labs/noticeboard', (req, res) => {
     const cookies = parseCookies(req.headers.cookie);
     if (!cookies.cuj_role) {
@@ -117,7 +112,7 @@ export function createLabsRouter(): Router {
           <h2>Central University of Jammu — Department Noticeboard</h2>
           <p>Welcome! Your current session role cookie is <code>cuj_role=${cookies.cuj_role || 'student'}</code>.</p>
           <ul>
-            <li><strong>[2026-11-26]</strong> CyberOps CTF Finals begin today at 10:00 IST in CS&IT Block.</li>
+            <li><strong>[2026-11-26]</strong> CyberOps CTF Finals begin today at 10:00 IST in CS&amp;IT Block.</li>
             <li><strong>[2026-11-25]</strong> Network maintenance scheduled for Rahya-Suchani Hostel Wing B.</li>
             <li><strong>[2026-11-24]</strong> Faculty confidential circulars are hosted on the <a href="/ctf-labs/noticeboard/admin">Admin Console</a>.</li>
           </ul>
@@ -171,9 +166,7 @@ export function createLabsRouter(): Router {
     );
   });
 
-  // =========================================================================
-  // WEB CHALLENGE 2: Samba Student Directory SQLi (/ctf-labs/directory)
-  // =========================================================================
+  // WEB CHALLENGE 2: Samba Student Directory SQLi
   router.get('/ctf-labs/directory', (_req, res) => {
     res.send(
       labPageShell(
@@ -233,9 +226,7 @@ export function createLabsRouter(): Router {
     }
   });
 
-  // =========================================================================
-  // WEB CHALLENGE 3: Dean's JWT Signature Vault (/ctf-labs/vault)
-  // =========================================================================
+  // WEB CHALLENGE 3: Dean's JWT Signature Vault
   router.get('/ctf-labs/vault', (_req, res) => {
     const guestToken = jwt.sign(
       { sub: 'cuj_student', role: 'student', campus: 'Rahya-Suchani' },
@@ -306,14 +297,11 @@ export function createLabsRouter(): Router {
     }
   });
 
-  // =========================================================================
-  // PWN LAB 1: Overflow Gradebook (/api/labs/pwn/gradebook)
-  // =========================================================================
+  // PWN LAB 1: Overflow Gradebook
   router.post('/api/labs/pwn/gradebook', (req, res) => {
     const rawInput = String(req.body?.input ?? '');
     const inputBuf = decodeEscapeBytes(rawInput);
 
-    // Simulated 36-byte StudentFrame struct: [student_name: 32 bytes][is_admin: 4 bytes uint32 LE]
     const frame = Buffer.alloc(36, 0);
     const copyLen = Math.min(inputBuf.length, 36);
     inputBuf.copy(frame, 0, 0, copyLen);
@@ -348,10 +336,8 @@ export function createLabsRouter(): Router {
     });
   });
 
-  // =========================================================================
-  // PWN LAB 2: Format Inspector Leak (/api/labs/pwn/inspector)
-  // =========================================================================
-  const PWN2_FLAG = 'CUJCTF{f0rm4t_str1ng_st4ck_l34k}'; // exactly 32 chars -> 4 x 8-byte LE words
+  // PWN LAB 2: Format Inspector Leak
+  const PWN2_FLAG = 'CUJCTF{f0rm4t_str1ng_st4ck_l34k}';
   const stackSlots: Record<number, string> = {
     1: '0x00007fffffffe420',
     2: '0x0000000000000080',
@@ -362,7 +348,6 @@ export function createLabsRouter(): Router {
   const flagBuf = Buffer.from(PWN2_FLAG, 'utf8');
   for (let slotIdx = 0; slotIdx < 4; slotIdx++) {
     const chunk = flagBuf.subarray(slotIdx * 8, (slotIdx + 1) * 8);
-    // Read little-endian 64-bit value
     const val = chunk.readBigUInt64LE(0);
     stackSlots[6 + slotIdx] = `0x${val.toString(16).padStart(16, '0')}`;
   }
@@ -387,50 +372,47 @@ export function createLabsRouter(): Router {
     });
   });
 
-  // =========================================================================
-  // MISC LAB 1: Rapid Hash Gauntlet (/api/labs/misc/hash-gauntlet/*)
-  // =========================================================================
+  // MISC LAB 1: Stateless Signed Proof-of-Work Gauntlet (Works across serverless containers!)
   router.get('/api/labs/misc/hash-gauntlet/start', (_req, res) => {
-    const challengeId = crypto.randomBytes(8).toString('hex');
     const prefix = `cuj_${crypto.randomBytes(6).toString('hex')}_`;
     const target = '0000';
-    const expiresAt = Date.now() + 15000; // 15 seconds window
-    powStore.set(challengeId, { prefix, target, expiresAt });
-
-    // Clean expired entries
-    for (const [id, entry] of powStore.entries()) {
-      if (entry.expiresAt < Date.now()) powStore.delete(id);
-    }
+    const challengeId = jwt.sign({ kind: 'pow', prefix, target }, JWT_SECRET, { expiresIn: '20s' });
 
     res.json({
       challengeId,
       prefix,
       targetHexPrefix: target,
-      instruction: `Find any string nonce such that SHA256("${prefix}" + nonce) starts with "${target}" within 15 seconds.`,
+      instruction: `Find any string nonce such that SHA256("${prefix}" + nonce) starts with "${target}" within 20 seconds.`,
       submitEndpoint: '/api/labs/misc/hash-gauntlet/verify',
-      expiresInSeconds: 15,
+      expiresInSeconds: 20,
     });
   });
 
   router.post('/api/labs/misc/hash-gauntlet/verify', (req, res) => {
     const challengeId = String(req.body?.challengeId ?? '');
     const nonce = String(req.body?.nonce ?? '');
-    const entry = powStore.get(challengeId);
-    if (!entry) {
-      res.status(404).json({ error: 'Unknown or expired challengeId. Call /start first.' });
+    if (!challengeId) {
+      res.status(400).json({ error: 'Missing challengeId. Call /start first.' });
       return;
     }
-    if (Date.now() > entry.expiresAt) {
-      powStore.delete(challengeId);
-      res.status(408).json({ error: 'Time limit exceeded (>15s). Request a fresh prefix.' });
+
+    let decoded: { kind?: string; prefix?: string; target?: string };
+    try {
+      decoded = jwt.verify(challengeId, JWT_SECRET) as { kind?: string; prefix?: string; target?: string };
+    } catch {
+      res.status(408).json({ error: 'Challenge token expired or invalid (>20s). Request a fresh prefix.' });
       return;
     }
-    const digest = crypto.createHash('sha256').update(entry.prefix + nonce).digest('hex');
-    if (!digest.startsWith(entry.target)) {
-      res.status(400).json({ error: `SHA256 mismatch: got ${digest.slice(0, 12)}..., expected prefix ${entry.target}` });
+    if (decoded.kind !== 'pow' || !decoded.prefix || !decoded.target) {
+      res.status(400).json({ error: 'Invalid challenge token.' });
       return;
     }
-    powStore.delete(challengeId);
+
+    const digest = crypto.createHash('sha256').update(decoded.prefix + nonce).digest('hex');
+    if (!digest.startsWith(decoded.target)) {
+      res.status(400).json({ error: `SHA256 mismatch: got ${digest.slice(0, 12)}..., expected prefix ${decoded.target}` });
+      return;
+    }
     res.json({
       success: true,
       digest,

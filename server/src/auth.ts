@@ -43,7 +43,7 @@ export function signAuthToken(userId: number): string {
   return jwt.sign({ uid: userId }, JWT_SECRET, { expiresIn: '7d' });
 }
 
-function loadUserFromHeader(req: Request): AuthUser | null {
+async function loadUserFromHeader(req: Request): Promise<AuthUser | null> {
   const header = req.headers.authorization || '';
   const queryToken = typeof req.query.token === 'string' ? req.query.token : '';
   const token = header.startsWith('Bearer ') ? header.slice(7).trim() : queryToken;
@@ -52,22 +52,23 @@ function loadUserFromHeader(req: Request): AuthUser | null {
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as { uid?: number };
     if (!decoded.uid) return null;
-    const row = db
-      .prepare('SELECT id, username, email, role, department, roll_number, team_id, avatar_seed FROM users WHERE id = ?')
-      .get(decoded.uid) as AuthUser | undefined;
+    const row = await db.get<AuthUser>(
+      'SELECT id, username, email, role, department, roll_number, team_id, avatar_seed FROM users WHERE id = ?',
+      decoded.uid
+    );
     return row || null;
   } catch {
     return null;
   }
 }
 
-export function optionalAuth(req: Request, _res: Response, next: NextFunction): void {
-  req.user = loadUserFromHeader(req);
+export async function optionalAuth(req: Request, _res: Response, next: NextFunction): Promise<void> {
+  req.user = await loadUserFromHeader(req);
   next();
 }
 
-export function requireAuth(req: Request, res: Response, next: NextFunction): void {
-  const user = loadUserFromHeader(req);
+export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const user = await loadUserFromHeader(req);
   if (!user) {
     res.status(401).json({ error: 'Authentication required. Please sign in.' });
     return;
@@ -76,8 +77,8 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
   next();
 }
 
-export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
-  const user = loadUserFromHeader(req);
+export async function requireAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const user = await loadUserFromHeader(req);
   if (!user) {
     res.status(401).json({ error: 'Authentication required.' });
     return;

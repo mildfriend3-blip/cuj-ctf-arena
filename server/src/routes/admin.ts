@@ -7,33 +7,27 @@ export function createAdminRouter(): Router {
   const router = express.Router();
   router.use(requireAdmin);
 
-  router.get('/overview', (_req, res) => {
-    const settings = getAllSettings();
-    const challenges = db
-      .prepare('SELECT * FROM challenges ORDER BY sort_order ASC, id ASC')
-      .all() as Array<Record<string, unknown>>;
-    const hints = db.prepare('SELECT * FROM hints ORDER BY challenge_id ASC, order_idx ASC').all();
-    const teams = db
-      .prepare(
-        `SELECT t.*,
-                (SELECT COUNT(*) FROM users u WHERE u.team_id = t.id) as member_count,
-                (SELECT COUNT(*) FROM solves s WHERE s.team_id = t.id) as solve_count
-         FROM teams t ORDER BY t.id ASC`
-      )
-      .all();
-    const submissions = db
-      .prepare(
-        `SELECT sub.id, sub.submitted_flag, sub.is_correct, sub.ip_address, sub.submitted_at,
-                c.title as challenge_title, c.category, t.name as team_name, u.username
-         FROM submissions sub
-         JOIN challenges c ON c.id = sub.challenge_id
-         LEFT JOIN teams t ON t.id = sub.team_id
-         JOIN users u ON u.id = sub.user_id
-         ORDER BY sub.id DESC
-         LIMIT 100`
-      )
-      .all();
-    const announcements = db.prepare('SELECT * FROM announcements ORDER BY id DESC LIMIT 30').all();
+  router.get('/overview', async (_req, res) => {
+    const settings = await getAllSettings();
+    const challenges = await db.all<Record<string, unknown>>('SELECT * FROM challenges ORDER BY sort_order ASC, id ASC');
+    const hints = await db.all('SELECT * FROM hints ORDER BY challenge_id ASC, order_idx ASC');
+    const teams = await db.all(
+      `SELECT t.*,
+              (SELECT COUNT(*) FROM users u WHERE u.team_id = t.id) as member_count,
+              (SELECT COUNT(*) FROM solves s WHERE s.team_id = t.id) as solve_count
+       FROM teams t ORDER BY t.id ASC`
+    );
+    const submissions = await db.all(
+      `SELECT sub.id, sub.submitted_flag, sub.is_correct, sub.ip_address, sub.submitted_at,
+              c.title as challenge_title, c.category, t.name as team_name, u.username
+       FROM submissions sub
+       JOIN challenges c ON c.id = sub.challenge_id
+       LEFT JOIN teams t ON t.id = sub.team_id
+       JOIN users u ON u.id = sub.user_id
+       ORDER BY sub.id DESC
+       LIMIT 100`
+    );
+    const announcements = await db.all('SELECT * FROM announcements ORDER BY id DESC LIMIT 30');
 
     res.json({
       settings,
@@ -49,7 +43,7 @@ export function createAdminRouter(): Router {
     });
   });
 
-  router.put('/settings', (req, res) => {
+  router.put('/settings', async (req, res) => {
     const allowedKeys = [
       'competition_name',
       'university_name',
@@ -66,26 +60,26 @@ export function createAdminRouter(): Router {
     const body = req.body || {};
     for (const k of allowedKeys) {
       if (body[k] !== undefined) {
-        setSetting(k, String(body[k]));
+        await setSetting(k, String(body[k]));
       }
     }
     if (body.scoreboard_frozen === '1' || body.scoreboard_frozen === true || body.scoreboard_frozen === 1) {
-      setSetting('scoreboard_frozen', '1');
+      await setSetting('scoreboard_frozen', '1');
       if (!body.freeze_at) {
-        setSetting('freeze_at', new Date().toISOString());
+        await setSetting('freeze_at', new Date().toISOString());
       }
     } else if (body.scoreboard_frozen === '0' || body.scoreboard_frozen === false || body.scoreboard_frozen === 0) {
-      setSetting('scoreboard_frozen', '0');
-      setSetting('freeze_at', '');
+      await setSetting('scoreboard_frozen', '0');
+      await setSetting('freeze_at', '');
     }
 
-    const updated = getAllSettings();
+    const updated = await getAllSettings();
     broadcastEvent('settings_update', updated);
     broadcastEvent('scoreboard_update', { reason: 'settings_changed' });
     res.json({ settings: updated });
   });
 
-  router.post('/challenges', (req, res) => {
+  router.post('/challenges', async (req, res) => {
     const b = req.body || {};
     const title = String(b.title || '').trim();
     const slug =
@@ -119,38 +113,43 @@ export function createAdminRouter(): Router {
     }
 
     try {
-      const insertRes = db
-        .prepare(
-          `INSERT INTO challenges (
-             slug, title, category, difficulty, description, author, flag_value,
-             initial_points, min_points, decay, is_dynamic, first_blood_bonus,
-             lab_type, lab_url, artifacts_json, tags_json, writeup, published
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, '[]', ?, ?, ?)`
-        )
-        .run(
-          slug,
-          title,
-          category,
-          difficulty,
-          description,
-          author,
-          flagValue,
-          initialPoints,
-          minPoints,
-          decay,
-          firstBloodBonus,
-          labType,
-          labUrl,
-          JSON.stringify(tags),
-          writeup,
-          published
-        );
-      const chId = Number(insertRes.lastInsertRowid);
+      const insertRes = await db.run(
+        `INSERT INTO challenges (
+           slug, title, category, difficulty, description, author, flag_value,
+           initial_points, min_points, decay, is_dynamic, first_blood_bonus,
+           lab_type, lab_url, artifacts_json, tags_json, writeup, published
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, '[]', ?, ?, ?)`,
+        slug,
+        title,
+        category,
+        difficulty,
+        description,
+        author,
+        flagValue,
+        initialPoints,
+        minPoints,
+        decay,
+        firstBloodBonus,
+        labType,
+        labUrl,
+        JSON.stringify(tags),
+        writeup,
+        published
+      );
+      const chId = insertRes.lastInsertRowid;
       if (Array.isArray(b.hints)) {
-        const insH = db.prepare('INSERT INTO hints (challenge_id, order_idx, content, cost) VALUES (?, ?, ?, ?)');
-        b.hints.forEach((h: { content?: string; cost?: number }, idx: number) => {
-          if (h?.content) insH.run(chId, idx + 1, String(h.content), Number(h.cost || 25));
-        });
+        for (let idx = 0; idx < b.hints.length; idx++) {
+          const h = b.hints[idx] as { content?: string; cost?: number };
+          if (h?.content) {
+            await db.run(
+              'INSERT INTO hints (challenge_id, order_idx, content, cost) VALUES (?, ?, ?, ?)',
+              chId,
+              idx + 1,
+              String(h.content),
+              Number(h.cost || 25)
+            );
+          }
+        }
       }
       broadcastEvent('scoreboard_update', { reason: 'challenge_created' });
       res.status(201).json({ id: chId });
@@ -159,9 +158,9 @@ export function createAdminRouter(): Router {
     }
   });
 
-  router.put('/challenges/:id', (req, res) => {
+  router.put('/challenges/:id', async (req, res) => {
     const chId = Number(req.params.id);
-    const existing = db.prepare('SELECT * FROM challenges WHERE id = ?').get(chId) as Record<string, unknown> | undefined;
+    const existing = await db.get<Record<string, unknown>>('SELECT * FROM challenges WHERE id = ?', chId);
     if (!existing) {
       res.status(404).json({ error: 'Challenge not found.' });
       return;
@@ -179,14 +178,13 @@ export function createAdminRouter(): Router {
           )
         : existing.tags_json;
 
-    db.prepare(
+    await db.run(
       `UPDATE challenges SET
         title = ?, category = ?, difficulty = ?, description = ?, author = ?,
         flag_value = ?, initial_points = ?, min_points = ?, decay = ?,
         first_blood_bonus = ?, lab_type = ?, lab_url = ?, tags_json = ?,
         writeup = ?, published = ?
-       WHERE id = ?`
-    ).run(
+       WHERE id = ?`,
       String(b.title ?? existing.title),
       String(b.category ?? existing.category),
       String(b.difficulty ?? existing.difficulty),
@@ -208,22 +206,22 @@ export function createAdminRouter(): Router {
     res.json({ updated: true });
   });
 
-  router.delete('/challenges/:id', (req, res) => {
+  router.delete('/challenges/:id', async (req, res) => {
     const chId = Number(req.params.id);
-    db.prepare('DELETE FROM challenges WHERE id = ?').run(chId);
+    await db.run('DELETE FROM challenges WHERE id = ?', chId);
     broadcastEvent('scoreboard_update', { reason: 'challenge_deleted' });
     res.json({ deleted: true });
   });
 
-  router.post('/teams/:id/ban', (req, res) => {
+  router.post('/teams/:id/ban', async (req, res) => {
     const teamId = Number(req.params.id);
     const banned = req.body?.banned ? 1 : 0;
-    db.prepare('UPDATE teams SET banned = ? WHERE id = ?').run(banned, teamId);
+    await db.run('UPDATE teams SET banned = ? WHERE id = ?', banned, teamId);
     broadcastEvent('scoreboard_update', { reason: 'team_moderation', teamId, banned });
     res.json({ teamId, banned: banned === 1 });
   });
 
-  router.post('/announcements', (req, res) => {
+  router.post('/announcements', async (req, res) => {
     const title = String(req.body?.title || '').trim();
     const body = String(req.body?.body || '').trim();
     const severity = String(req.body?.severity || 'info');
@@ -231,16 +229,20 @@ export function createAdminRouter(): Router {
       res.status(400).json({ error: 'Announcement title and body are required.' });
       return;
     }
-    const r = db
-      .prepare('INSERT INTO announcements (title, body, severity, created_by) VALUES (?, ?, ?, ?)')
-      .run(title, body, severity, req.user!.username);
-    const item = db.prepare('SELECT * FROM announcements WHERE id = ?').get(Number(r.lastInsertRowid));
+    const r = await db.run(
+      'INSERT INTO announcements (title, body, severity, created_by) VALUES (?, ?, ?, ?)',
+      title,
+      body,
+      severity,
+      req.user!.username
+    );
+    const item = await db.get('SELECT * FROM announcements WHERE id = ?', r.lastInsertRowid);
     broadcastEvent('announcement', item);
     res.status(201).json({ announcement: item });
   });
 
-  router.delete('/announcements/:id', (req, res) => {
-    db.prepare('DELETE FROM announcements WHERE id = ?').run(Number(req.params.id));
+  router.delete('/announcements/:id', async (req, res) => {
+    await db.run('DELETE FROM announcements WHERE id = ?', Number(req.params.id));
     res.json({ deleted: true });
   });
 

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "npm install && npm --prefix client install",
+  "buildCommand": "npm run build:client",
+  "outputDirectory": "client/dist",
+  "functions": {
+    "api/index.ts": {
+      "includeFiles": "server/artifacts/**"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index.ts"
+    },
+    {
+      "source": "/ctf-labs/(.*)",
+      "destination": "/api/index.ts"
+    },
+    {
+      "source": "/((?!api/|ctf-labs/).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

@@ -50,25 +50,23 @@ interface TeamRow {
   created_at: string;
 }
 
-export function getChallengePointMap(includeFrozenSolves: boolean) {
-  const settings = getAllSettings();
+export async function getChallengePointMap(includeFrozenSolves: boolean) {
+  const settings = await getAllSettings();
   const frozen = settings.scoreboard_frozen === '1';
   const freezeAt = settings.freeze_at || '';
   const globalDynamic = settings.dynamic_scoring !== '0';
 
-  const challenges = db
-    .prepare('SELECT id, slug, title, category, difficulty, initial_points, min_points, decay, is_dynamic, published FROM challenges')
-    .all() as unknown as ChallengeScoreRow[];
+  const challenges = await db.all<ChallengeScoreRow>(
+    'SELECT id, slug, title, category, difficulty, initial_points, min_points, decay, is_dynamic, published FROM challenges'
+  );
 
-  let solves = db
-    .prepare(
-      `SELECT s.id, s.challenge_id, s.team_id, s.user_id, s.is_first_blood, s.bonus_points, s.solved_at
-       FROM solves s
-       JOIN teams t ON t.id = s.team_id
-       WHERE t.banned = 0
-       ORDER BY s.solved_at ASC, s.id ASC`
-    )
-    .all() as unknown as SolveRow[];
+  let solves = await db.all<SolveRow>(
+    `SELECT s.id, s.challenge_id, s.team_id, s.user_id, s.is_first_blood, s.bonus_points, s.solved_at
+     FROM solves s
+     JOIN teams t ON t.id = s.team_id
+     WHERE t.banned = 0
+     ORDER BY s.solved_at ASC, s.id ASC`
+  );
 
   if (!includeFrozenSolves && frozen && freezeAt) {
     solves = solves.filter((s) => s.solved_at <= freezeAt);
@@ -78,45 +76,54 @@ export function getChallengePointMap(includeFrozenSolves: boolean) {
   const firstBloodByChallenge = new Map<number, { team_id: number; user_id: number; solved_at: string }>();
 
   for (const s of solves) {
-    solveCounts.set(s.challenge_id, (solveCounts.get(s.challenge_id) || 0) + 1);
-    if (!firstBloodByChallenge.has(s.challenge_id)) {
-      firstBloodByChallenge.set(s.challenge_id, {
-        team_id: s.team_id,
-        user_id: s.user_id,
-        solved_at: s.solved_at,
+    const chId = Number(s.challenge_id);
+    solveCounts.set(chId, (solveCounts.get(chId) || 0) + 1);
+    if (!firstBloodByChallenge.has(chId)) {
+      firstBloodByChallenge.set(chId, {
+        team_id: Number(s.team_id),
+        user_id: Number(s.user_id),
+        solved_at: String(s.solved_at),
       });
     }
   }
 
   const pointsMap = new Map<number, number>();
   for (const c of challenges) {
-    const count = solveCounts.get(c.id) || 0;
+    const id = Number(c.id);
+    const count = solveCounts.get(id) || 0;
     pointsMap.set(
-      c.id,
-      calculateDynamicPoints(c.initial_points, c.min_points, c.decay, count, c.is_dynamic === 1, globalDynamic)
+      id,
+      calculateDynamicPoints(
+        Number(c.initial_points),
+        Number(c.min_points),
+        Number(c.decay),
+        count,
+        Number(c.is_dynamic) === 1,
+        globalDynamic
+      )
     );
   }
 
   return { challenges, solves, solveCounts, firstBloodByChallenge, pointsMap, frozen, freezeAt };
 }
 
-export function getScoreboardData(isAdminView = false) {
-  const { challenges, solves, pointsMap, frozen, freezeAt } = getChallengePointMap(isAdminView);
-  const challengeMap = new Map(challenges.map((c) => [c.id, c]));
+export async function getScoreboardData(isAdminView = false) {
+  const { challenges, solves, pointsMap, frozen, freezeAt } = await getChallengePointMap(isAdminView);
+  const challengeMap = new Map(challenges.map((c) => [Number(c.id), c]));
 
-  const teams = db
-    .prepare('SELECT id, name, tag, department, motto, banned, created_at FROM teams WHERE banned = 0')
-    .all() as unknown as TeamRow[];
+  const teams = await db.all<TeamRow>(
+    'SELECT id, name, tag, department, motto, banned, created_at FROM teams WHERE banned = 0'
+  );
 
-  const membersCountRows = db
-    .prepare('SELECT team_id, COUNT(*) as cnt FROM users WHERE team_id IS NOT NULL GROUP BY team_id')
-    .all() as Array<{ team_id: number; cnt: number }>;
-  const membersCount = new Map(membersCountRows.map((r) => [r.team_id, r.cnt]));
+  const membersCountRows = await db.all<{ team_id: number; cnt: number }>(
+    'SELECT team_id, COUNT(*) as cnt FROM users WHERE team_id IS NOT NULL GROUP BY team_id'
+  );
+  const membersCount = new Map(membersCountRows.map((r) => [Number(r.team_id), Number(r.cnt)]));
 
-  const hintCosts = db
-    .prepare('SELECT team_id, SUM(cost_paid) as total_cost FROM hint_unlocks GROUP BY team_id')
-    .all() as Array<{ team_id: number; total_cost: number }>;
-  const hintCostMap = new Map(hintCosts.map((r) => [r.team_id, r.total_cost || 0]));
+  const hintCosts = await db.all<{ team_id: number; total_cost: number }>(
+    'SELECT team_id, SUM(cost_paid) as total_cost FROM hint_unlocks GROUP BY team_id'
+  );
+  const hintCostMap = new Map(hintCosts.map((r) => [Number(r.team_id), Number(r.total_cost || 0)]));
 
   const teamBuckets = new Map<
     number,
@@ -133,19 +140,27 @@ export function getScoreboardData(isAdminView = false) {
       firstBloods: number;
       lastSolveAt: string | null;
       categoryScores: Record<string, number>;
-      solvedChallenges: Array<{ challengeId: number; title: string; category: string; points: number; isFirstBlood: boolean; solvedAt: string }>;
+      solvedChallenges: Array<{
+        challengeId: number;
+        title: string;
+        category: string;
+        points: number;
+        isFirstBlood: boolean;
+        solvedAt: string;
+      }>;
     }
   >();
 
   for (const t of teams) {
-    const penalty = hintCostMap.get(t.id) || 0;
-    teamBuckets.set(t.id, {
-      id: t.id,
+    const id = Number(t.id);
+    const penalty = hintCostMap.get(id) || 0;
+    teamBuckets.set(id, {
+      id,
       name: t.name,
       tag: t.tag,
       department: t.department,
       motto: t.motto,
-      memberCount: membersCount.get(t.id) || 0,
+      memberCount: membersCount.get(id) || 0,
       score: 0,
       hintPenalty: penalty,
       solveCount: 0,
@@ -157,24 +172,25 @@ export function getScoreboardData(isAdminView = false) {
   }
 
   for (const s of solves) {
-    const team = teamBuckets.get(s.team_id);
-    const ch = challengeMap.get(s.challenge_id);
+    const team = teamBuckets.get(Number(s.team_id));
+    const ch = challengeMap.get(Number(s.challenge_id));
     if (!team || !ch) continue;
-    const basePts = pointsMap.get(ch.id) || ch.initial_points;
-    const totalEarned = basePts + (s.bonus_points || 0);
+    const chId = Number(ch.id);
+    const basePts = pointsMap.get(chId) || Number(ch.initial_points);
+    const totalEarned = basePts + Number(s.bonus_points || 0);
     team.score += totalEarned;
     team.solveCount += 1;
-    if (s.is_first_blood) team.firstBloods += 1;
+    if (Number(s.is_first_blood) === 1) team.firstBloods += 1;
     if (!team.lastSolveAt || s.solved_at > team.lastSolveAt) {
       team.lastSolveAt = s.solved_at;
     }
     team.categoryScores[ch.category] = (team.categoryScores[ch.category] || 0) + totalEarned;
     team.solvedChallenges.push({
-      challengeId: ch.id,
+      challengeId: chId,
       title: ch.title,
       category: ch.category,
       points: totalEarned,
-      isFirstBlood: s.is_first_blood === 1,
+      isFirstBlood: Number(s.is_first_blood) === 1,
       solvedAt: s.solved_at,
     });
   }
@@ -196,7 +212,6 @@ export function getScoreboardData(isAdminView = false) {
     })
     .map((team, idx) => ({ ...team, rank: idx + 1 }));
 
-  // Build score progression series for top 8 teams
   const topTeams = standings.slice(0, 8);
   const topIds = new Set(topTeams.map((t) => t.id));
   const seriesMap = new Map<number, Array<{ time: string; score: number }>>();
@@ -207,13 +222,14 @@ export function getScoreboardData(isAdminView = false) {
   }
 
   for (const s of solves) {
-    if (!topIds.has(s.team_id)) continue;
-    const ch = challengeMap.get(s.challenge_id);
+    const tId = Number(s.team_id);
+    if (!topIds.has(tId)) continue;
+    const ch = challengeMap.get(Number(s.challenge_id));
     if (!ch) continue;
-    const pts = (pointsMap.get(ch.id) || ch.initial_points) + (s.bonus_points || 0);
-    const nextScore = (runningScore.get(s.team_id) || 0) + pts;
-    runningScore.set(s.team_id, nextScore);
-    seriesMap.get(s.team_id)?.push({ time: s.solved_at, score: nextScore });
+    const pts = (pointsMap.get(Number(ch.id)) || Number(ch.initial_points)) + Number(s.bonus_points || 0);
+    const nextScore = (runningScore.get(tId) || 0) + pts;
+    runningScore.set(tId, nextScore);
+    seriesMap.get(tId)?.push({ time: s.solved_at, score: nextScore });
   }
 
   const timeline = topTeams.map((t) => ({
@@ -224,27 +240,31 @@ export function getScoreboardData(isAdminView = false) {
     points: seriesMap.get(t.id) || [],
   }));
 
-  // Individual MVP solvers
-  const userRows = db
-    .prepare(
-      `SELECT u.id, u.username, u.department, t.name as team_name, t.tag as team_tag
-       FROM users u
-       LEFT JOIN teams t ON t.id = u.team_id
-       WHERE u.role = 'player'`
-    )
-    .all() as Array<{ id: number; username: string; department: string; team_name: string | null; team_tag: string | null }>;
-  const userMap = new Map(userRows.map((u) => [u.id, u]));
+  const userRows = await db.all<{
+    id: number;
+    username: string;
+    department: string;
+    team_name: string | null;
+    team_tag: string | null;
+  }>(
+    `SELECT u.id, u.username, u.department, t.name as team_name, t.tag as team_tag
+     FROM users u
+     LEFT JOIN teams t ON t.id = u.team_id
+     WHERE u.role = 'player'`
+  );
+  const userMap = new Map(userRows.map((u) => [Number(u.id), u]));
   const userStats = new Map<number, { solves: number; points: number; firstBloods: number }>();
 
   for (const s of solves) {
-    const ch = challengeMap.get(s.challenge_id);
+    const ch = challengeMap.get(Number(s.challenge_id));
     if (!ch) continue;
-    const pts = (pointsMap.get(ch.id) || ch.initial_points) + (s.bonus_points || 0);
-    const curr = userStats.get(s.user_id) || { solves: 0, points: 0, firstBloods: 0 };
+    const uId = Number(s.user_id);
+    const pts = (pointsMap.get(Number(ch.id)) || Number(ch.initial_points)) + Number(s.bonus_points || 0);
+    const curr = userStats.get(uId) || { solves: 0, points: 0, firstBloods: 0 };
     curr.solves += 1;
     curr.points += pts;
-    if (s.is_first_blood) curr.firstBloods += 1;
-    userStats.set(s.user_id, curr);
+    if (Number(s.is_first_blood) === 1) curr.firstBloods += 1;
+    userStats.set(uId, curr);
   }
 
   const topPlayers = Array.from(userStats.entries())

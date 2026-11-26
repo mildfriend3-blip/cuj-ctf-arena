@@ -132,6 +132,8 @@ export interface RecentSolve {
 
 export interface CompetitionOverview {
   settings: Record<string, string>;
+  realtimeMode?: 'sse' | 'polling';
+  dbMode?: string;
   stats: {
     totalChallenges: number;
     totalTeams: number;

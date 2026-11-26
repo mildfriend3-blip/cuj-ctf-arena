@@ -66,9 +66,18 @@ npx tsx server/scripts/e2e_test.ts
 | **Solo Student (Test Join/Create)** | `kabir.mca@cujammu.ac.in` | `Student@CUJ2026` |
 | **Competition Organizer (Admin)** | `admin@cujammu.ac.in` | `Admin@CUJ2026` |
 
-## Cloud Deployment (Docker / Render)
+## Cloud Deployment (Vercel / Docker / Render)
 
-Because GitHub Pages serves static files only and cannot run the Node.js + SQLite backend or live Web/Pwn labs, this repository includes both a `Dockerfile` and a `render.yaml` Blueprint (plus a ready-to-enable GitHub Actions CI template in `docs/ci.yml` — copy it to `.github/workflows/ci.yml` once your token/account has `workflow` scope):
+### Option 1: Vercel (Serverless + Turso SQLite)
+This repository is pre-configured for Vercel via `vercel.json`, `api/index.ts`, and `"engines": { "node": "24.x" }`:
+
+1. Import **https://github.com/mildfriend3-blip/cuj-ctf-arena** in [Vercel](https://vercel.com/new) — `vercel.json` automatically installs root + client packages, builds Vite into `client/dist`, bundles `server/artifacts/**` into `api/index.ts`, and routes `/api/*` and `/ctf-labs/*` to Express.
+2. Add environment variables in Vercel Project Settings:
+   - `JWT_SECRET` — any strong random secret for player/admin auth tokens.
+   - `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN` *(recommended for live competitions)* — free [Turso](https://turso.tech) libSQL database so teams, accounts, and flag solves persist across all serverless functions. *(If omitted, Vercel previews run zero-config using `/tmp/cuj_ctf.sqlite` per warm instance.)*
+
+### Option 2: Docker / Render
+This repository also includes a `Dockerfile` and a `render.yaml` Blueprint (plus a GitHub Actions CI template in `docs/ci.yml`):
 
 1. Connect this GitHub repository to [Render](https://render.com) (New → Blueprint) or any Docker host (Railway, Fly.io, campus VM).
 2. Set a strong `JWT_SECRET` environment variable in production (`render.yaml` auto-generates one).

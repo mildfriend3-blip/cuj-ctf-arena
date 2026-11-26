@@ -113,7 +113,17 @@ export function App() {
     return () => clearInterval(id);
   }, [overview?.settings?.ends_at]);
 
+  const realtimeMode = overview?.realtimeMode || 'sse';
+
   useEffect(() => {
+    if (realtimeMode === 'polling') {
+      setSseConnected(true);
+      const pollId = setInterval(() => {
+        loadAll().catch(() => {});
+      }, 8000);
+      return () => clearInterval(pollId);
+    }
+
     const es = new EventSource('/api/events');
     es.addEventListener('connected', () => setSseConnected(true));
     es.onerror = () => setSseConnected(false);
@@ -162,7 +172,7 @@ export function App() {
     });
 
     return () => es.close();
-  }, [loadAll]);
+  }, [loadAll, realtimeMode]);
 
   useEffect(() => {
     if (!toast) return;
